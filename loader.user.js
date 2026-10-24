@@ -9,7 +9,7 @@
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
 // @connect      discord.com
-// @require      https://cdn.jsdelivr.net/gh/thailandcodesSS/tools@main/script.js
+// @require      https://cdn.jsdelivr.net/gh/thailandcodesSS/thailandcodes@main/script.js
 // ==/UserScript==
 
 (function() {
